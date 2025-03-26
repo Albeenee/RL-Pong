@@ -9,6 +9,8 @@ import numpy as np
 from PIL import Image
 import logging
 import copy  # pour cloner le modèle
+import json  # pour l'enregistrement en JSON
+import ale_py
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -63,9 +65,10 @@ class DQNModel(nn.Module):
         return self.fc3(x)
 
 class DQNAgent:
-    def __init__(self, model, optimizer, memory, nb_actions, target_update_interval=1000, gamma=0.99, epsilon=1.0, epsilon_min=0.1, epsilon_decay=0.995):
+    def __init__(self, model, optimizer, scheduler, memory, nb_actions, target_update_interval=1000, gamma=0.99, epsilon=1.0, epsilon_min=0.1, epsilon_decay=0.995):
         self.model = model
         self.optimizer = optimizer
+        self.scheduler = scheduler
         self.memory = memory
         self.nb_actions = nb_actions
         self.gamma = gamma
@@ -116,6 +119,10 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
+        # Mise à jour du scheduler à chaque étape
+        self.scheduler.step()
+
+
         # Mise à jour de epsilon
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
@@ -132,34 +139,38 @@ if __name__ == "__main__":
     WINDOW_LENGTH = 12
     nb_actions = 6
     input_shape = (WINDOW_LENGTH, IMG_SHAPE[0], IMG_SHAPE[1])
-    learning_rate = 0.000005
-    batch_size = 32
-    replay_capacity = 1000000
+    learning_rate = 0.0000025
+    batch_size = 128
+    replay_capacity = 500000
     nb_steps = 1000000
     checkpoint_interval = 10000
-    target_update_interval = 10000  # intervalle de mise à jour du target network
+    target_update_interval = 1000  # intervalle de mise à jour du target network
 
     env = gym.make('ALE/Pong-v5')
 
     model = DQNModel((WINDOW_LENGTH,) + IMG_SHAPE, nb_actions)
-    checkpoint = torch.load("checkpoints/current_best.pth", map_location=torch.device('cpu'))
+
+    # Charger les poids du modèle pré-entraîné
+    checkpoint = torch.load("../checkpoints/best_model.pth", map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint["model_state_dict"])
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     # Scheduler: diminue le learning rate de 10% toutes les 10 000 étapes
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10000, gamma=0.5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10000, gamma=0.99)
 
     memory = ReplayBuffer(replay_capacity)
     processor = ImageProcessor()
-    agent = DQNAgent(model, optimizer, memory, nb_actions, target_update_interval=target_update_interval)
+    agent = DQNAgent(model, optimizer, scheduler, memory, nb_actions, target_update_interval=target_update_interval)
 
     episode_rewards = []
+    step_rewards = []  # Pour enregistrer la reward de chaque étape
+    reward_log = {}   # Dictionnaire pour stocker la reward moyenne des 100 derniers steps
     state, info = env.reset()
     state = np.stack([processor.process_observation(state)] * WINDOW_LENGTH, axis=0)
 
     episode_reward = 0
     # Phase de warm-up : collecte d'expériences aléatoires avant entraînement
-    warmup_steps = 0
+    warmup_steps = 10000
     logging.info(f"Début du warm-up pour {warmup_steps} steps...")
     print(f"Début du warm-up pour {warmup_steps} steps...")
 
@@ -196,8 +207,9 @@ if __name__ == "__main__":
         agent.store_transition(state, action, reward, next_state, done)
         agent.train(batch_size)
 
-        # Mise à jour du scheduler à chaque étape
-        scheduler.step()
+        # Enregistrer la reward de cette étape dans la liste step_rewards
+        step_rewards.append(reward)
+
 
         state = next_state
         episode_reward += reward
@@ -215,14 +227,23 @@ if __name__ == "__main__":
                 'optimizer_state_dict': optimizer.state_dict(),
                 'step': step,
                 'episode_rewards': episode_rewards
-            }, f"checkpoints/checkpoint_{step}.pth")
-            logging.info(f"Checkpoint sauvegardé à l'étape {step}")
-            print(f"Step {step} - Checkpoint sauvegardé.")
+            }, f"checkpoints/checkpoint_{1420000+step}.pth")
+            logging.info(f"Checkpoint sauvegardé à l'étape {1420000+step}")
+            print(f"Step {1420000+step} - Checkpoint sauvegardé.")
 
-        if step % 1000 == 0:
-            avg_reward = np.mean(episode_rewards[-100:]) if episode_rewards else 0
-            logging.info(f"Step {step}, Dernier avg reward sur 100 épisodes: {avg_reward:.2f}")
-            print(f"Step {step}, Dernier avg reward sur 100 épisodes: {avg_reward:.2f}")
+
+
+        if step % 10000 == 0:
+            avg_ep_reward = np.mean(episode_rewards[-100:]) if episode_rewards else 0
+            reward_log[step] = avg_ep_reward
+            current_lr = optimizer.param_groups[0]['lr']
+
+            with open("reaward.json", "w") as f:
+                json.dump(reward_log, f)
+            logging.info(f"Step {1420000+step}, Dernier avg reward sur 100 épisodes: {avg_ep_reward:.2f}, LR: {current_lr}")
+            print(f"Step {1420000+step}, Dernier avg reward sur 100 épisodes: {avg_ep_reward:.2f}")
+
+
 
     env.close()
 
