@@ -53,7 +53,7 @@ def main():
 
     # Création du modèle et chargement des poids
     model = DQNModel(input_shape, nb_actions)
-    checkpoint = torch.load("checkpoints/current_best.pth", map_location=torch.device('cpu'))
+    checkpoint = torch.load("checkpoints/best_model.pth", map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint["model_state_dict"])
 
     model.eval()
